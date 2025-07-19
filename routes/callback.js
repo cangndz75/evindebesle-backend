@@ -1,9 +1,7 @@
 const express = require("express");
 const Iyzipay = require("iyzipay");
-const bodyParser = require("body-parser");
 
 const router = express.Router();
-router.use(bodyParser.urlencoded({ extended: false })); // sadece bu route için!
 
 const createIyzipayClient = () => {
   return new Iyzipay({
@@ -14,59 +12,60 @@ const createIyzipayClient = () => {
 };
 
 router.post("/", async (req, res) => {
-  const { token, conversationId } = req.body;
+  const { token, paymentId, conversationId } = req.body;
   const appointmentId = req.query.appointmentId;
   const redirectBase = process.env.NEXT_PUBLIC_SITE_URL || "http://localhost:3000";
 
-  console.log("📥 Gelen callback verisi:", { token, conversationId, appointmentId });
+  console.log("📥 Callback verisi:", {
+    token,
+    paymentId,
+    conversationId,
+    appointmentId,
+  });
 
-  if (!token || !conversationId || !appointmentId) {
-    console.warn("⚠️ Eksik veri:", { token, conversationId, appointmentId });
+  if ((!token && !paymentId) || !conversationId || !appointmentId) {
+    console.warn("⚠️ Eksik veri:", { token, paymentId, conversationId, appointmentId });
     return res.status(400).send("Eksik veri");
   }
 
   const iyzipay = createIyzipayClient();
 
-  iyzipay.payment.retrieve(
-    {
-      locale: Iyzipay.LOCALE.TR,
-      conversationId,
-      token,
-    },
-    (err1, retrieveResult) => {
-      if (err1 || retrieveResult?.status !== "success" || !retrieveResult.paymentId) {
-        console.error("❌ retrieve hatası:", err1 || retrieveResult);
-        return res.redirect(`${redirectBase}/payment-failed`);
-      }
+  const request = {
+    locale: Iyzipay.LOCALE.TR,
+    conversationId,
+    ...(token ? { token } : { paymentId }), // token varsa onu, yoksa paymentId'yi kullan
+  };
 
-      const paymentId = retrieveResult.paymentId;
-
-      iyzipay.threedsPayment.create(
-        {
-          locale: Iyzipay.LOCALE.TR,
-          token,
-          conversationId,
-          paymentId,
-        },
-        (err2, result) => {
-          if (err2 || result.status !== "success") {
-            console.error("❌ 3D onay hatası:", err2 || result);
-            return res.redirect(`${redirectBase}/payment-failed`);
-          }
-
-          console.log("✅ 3D onay başarılı:", {
-            appointmentId,
-            paidPrice: result.paidPrice,
-            card: result.paymentCard?.cardNumber,
-          });
-
-          return res.redirect(
-            `${redirectBase}/payment-success?appointmentId=${appointmentId}&paidPrice=${result.paidPrice}`
-          );
-        }
-      );
+  iyzipay.threedsPayment.create(request, async (err, result) => {
+    if (err || result.status !== "success") {
+      console.error("❌ 3D onay hatası:", err || result);
+      return res.redirect(`${redirectBase}/payment-failed`);
     }
-  );
+
+    console.log("✅ 3D onay başarılı:", {
+      appointmentId,
+      paidPrice: result.paidPrice,
+    });
+
+    // ✅ Randevuyu güncelle
+    try {
+      await fetch(`${process.env.NEXT_PUBLIC_API_URL}/api/payment/complete`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          appointmentId,
+          paidPrice: result.paidPrice,
+        }),
+      });
+      console.log("🟢 Randevu durumu COMPLETED olarak güncellendi.");
+    } catch (updateErr) {
+      console.error("⚠️ Randevu güncelleme hatası:", updateErr);
+    }
+
+    return res.redirect(
+      `${redirectBase}/success?appointmentId=${appointmentId}&paidPrice=${result.paidPrice}`
+    );
+  });
 });
 
 module.exports = router;

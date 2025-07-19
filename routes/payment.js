@@ -25,9 +25,10 @@ router.post("/initiate", (req, res) => {
     draftAppointmentId = uuidv4();
   }
 
-  const finalPrice = typeof price === "number" && !isNaN(price) && price > 0
-    ? price.toFixed(2)
-    : "0.00";
+  const finalPrice =
+    typeof price === "number" && !isNaN(price) && price > 0
+      ? price.toFixed(2)
+      : "0.00";
 
   const iyzipay = new Iyzipay({
     apiKey: process.env.IYZIPAY_API_KEY,
@@ -101,13 +102,18 @@ router.post("/initiate", (req, res) => {
   iyzipay.threedsInitialize.create(request, (err, result) => {
     if (err) {
       console.error("💥 3D başlatma hatası:", err);
-      return res.status(500).json({ error: "Sunucu hatası", detail: err.message });
+      return res
+        .status(500)
+        .json({ error: "Sunucu hatası", detail: err.message });
     }
+    console.log("🧠 Iyzico Response:", result); 
 
     if (result.status === "success") {
       return res.json({ paymentPageHtml: result.threeDSHtmlContent });
     } else {
-      return res.status(400).json({ error: result.errorMessage || "3D ödeme başlatılamadı" });
+      return res
+        .status(400)
+        .json({ error: result.errorMessage || "3D ödeme başlatılamadı" });
     }
   });
 });
