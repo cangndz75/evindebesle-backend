@@ -115,15 +115,12 @@ router.post("/initiate", (req, res) => {
     }
 
     const token = result.token;
-    const htmlContent = result.threeDSHtmlContent;
 
-    const modifiedHtml = htmlContent.replace(
-      "</form>",
-      `
-      <input type="hidden" name="token" value="${token}" />
-      <input type="hidden" name="conversationId" value="${conversationId}" />
-      <input type="hidden" name="draftAppointmentId" value="${draftAppointmentId}" />
-    </form>`
+    const callbackUrl = `${process.env.NEXT_PUBLIC_API_URL}/api/payment/callback?draftAppointmentId=${draftAppointmentId}&token=${token}&conversationId=${conversationId}`;
+
+    const modifiedHtml = result.threeDSHtmlContent.replace(
+      /action="[^"]+"/,
+      `action="${callbackUrl}"`
     );
 
     const encodedHtml = Buffer.from(modifiedHtml, "utf-8").toString("base64");
@@ -137,8 +134,9 @@ router.post("/callback", async (req, res) => {
   console.log("➡️ BODY:", req.body);
   console.log("➡️ QUERY:", req.query);
 
-  const { token, conversationId } = req.body;
-  const draftAppointmentId = req.query.draftAppointmentId;
+  const { token, conversationId, draftAppointmentId } = req.query;
+  console.log("🔍 Callback verileri:", { token, conversationId, draftAppointmentId });
+
   const redirectBase =
     process.env.NEXT_PUBLIC_SITE_URL || "http://localhost:3000";
 
