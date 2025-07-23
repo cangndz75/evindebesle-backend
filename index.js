@@ -8,9 +8,13 @@ dotenv.config();
 const app = express();
 
 // ✅ Middleware'ler
-app.use(cors());
+app.use(cors({
+  origin: "http://localhost:3000", // Local frontend adresi
+  methods: ["GET", "POST"],
+  credentials: true,
+}));
 app.use(express.json());
-app.use(express.urlencoded({ extended: false })); // Burada sadece "false" kullan
+app.use(express.urlencoded({ extended: false }));
 
 // ✅ Route tanımları
 app.use("/api/payment", paymentRoutes);

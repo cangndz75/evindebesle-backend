@@ -12,6 +12,7 @@ const formatDateForIyzipay = () => {
   return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}-${String(now.getDate()).padStart(2, "0")} ${String(now.getHours()).padStart(2, "0")}:${String(now.getMinutes()).padStart(2, "0")}:${String(now.getSeconds()).padStart(2, "0")}`;
 };
 
+// Ödeme başlatma
 router.post("/initiate", (req, res) => {
   const {
     cardHolderName,
@@ -52,7 +53,7 @@ router.post("/initiate", (req, res) => {
     basketId: draftAppointmentId,
     paymentChannel: Iyzipay.PAYMENT_CHANNEL.WEB,
     paymentGroup: Iyzipay.PAYMENT_GROUP.PRODUCT,
-    callbackUrl: `${process.env.NEXT_PUBLIC_API_URL}/api/payment/callback?draftAppointmentId=${draftAppointmentId}`,
+    callbackUrl: `${process.env.NEXT_PUBLIC_API_URL}/api/payment/callback?appointmentId=${draftAppointmentId}`,
     paymentCard: {
       cardHolderName: cardHolderName || "Test User",
       cardNumber: (cardNumber || "").replace(/\s/g, ""),
@@ -105,6 +106,7 @@ router.post("/initiate", (req, res) => {
   };
 
   console.log("📥 3D ödeme başlatılıyor:", { draftAppointmentId, finalPrice });
+  console.log("📤 Oluşturulan callbackUrl:", request.callbackUrl);
 
   iyzipay.threedsInitialize.create(request, (err, result) => {
     if (err || result.status !== "success") {
@@ -115,38 +117,40 @@ router.post("/initiate", (req, res) => {
     }
 
     const token = result.token;
+    console.log("🔑 Iyzico Token:", token);
+    console.log("📄 Orijinal threeDSHtmlContent:", result.threeDSHtmlContent);
 
-    const callbackUrl = `${process.env.NEXT_PUBLIC_API_URL}/api/payment/callback?draftAppointmentId=${draftAppointmentId}&token=${token}&conversationId=${conversationId}`;
-
-    const modifiedHtml = result.threeDSHtmlContent.replace(
-      /action="[^"]+"/,
-      `action="${callbackUrl}"`
-    );
-
-    const encodedHtml = Buffer.from(modifiedHtml, "utf-8").toString("base64");
-
-    return res.json({ paymentPageHtml: encodedHtml });
+    const encodedHtml = Buffer.from(result.threeDSHtmlContent, "utf-8").toString("base64");
+    return res.json({ paymentPageHtml: encodedHtml, token });
   });
 });
 
+// Callback
 router.post("/callback", async (req, res) => {
   console.log("🔄 CALLBACK GELDİ");
   console.log("➡️ BODY:", req.body);
   console.log("➡️ QUERY:", req.query);
 
-  const { token, conversationId, draftAppointmentId } = req.query;
-  console.log("🔍 Callback verileri:", { token, conversationId, draftAppointmentId });
+  const { paymentId, conversationId, status } = req.body;
+  const { appointmentId } = req.query;
+  const effectiveAppointmentId = appointmentId;
 
-  const redirectBase =
-    process.env.NEXT_PUBLIC_SITE_URL || "http://localhost:3000";
+  console.log("🔍 Callback verileri:", { paymentId, conversationId, status, effectiveAppointmentId });
 
-  if (!token || !conversationId || !draftAppointmentId) {
+  const redirectBase = process.env.NEXT_PUBLIC_SITE_URL || "http://localhost:3000";
+
+  if (!paymentId || !conversationId || !effectiveAppointmentId) {
     console.warn("⚠️ Eksik callback verisi:", {
-      token,
+      paymentId,
       conversationId,
-      draftAppointmentId,
+      effectiveAppointmentId,
     });
     return res.status(400).send("Eksik veri");
+  }
+
+  if (status !== "success") {
+    console.error("❌ Ödeme durumu başarısız:", status);
+    return res.redirect(`${redirectBase}/fail`);
   }
 
   const iyzipay = new Iyzipay({
@@ -158,29 +162,49 @@ router.post("/callback", async (req, res) => {
   const request = {
     locale: Iyzipay.LOCALE.TR,
     conversationId,
-    token,
+    paymentId,
   };
 
-  iyzipay.threedsPayment.create(request, async (err, result) => {
+  iyzipay.payment.retrieve(request, async (err, result) => {
     if (err || result.status !== "success") {
-      console.error("❌ 3D ödeme onayı başarısız:", err || result);
+      console.error("❌ Ödeme onayı başarısız:", err || result);
       return res.redirect(`${redirectBase}/fail`);
     }
 
     try {
-      await fetch(`${process.env.NEXT_PUBLIC_API_URL}/api/payment/complete`, {
+      const requestBody = {
+        appointmentId: effectiveAppointmentId,
+        paidPrice: result.paidPrice,
+        conversationId: result.conversationId,
+      };
+      console.log("📤 Complete isteği gönderiliyor:", requestBody); // Gönderilen veriyi logla
+
+      const completeResponse = await fetch(`${process.env.NEXT_PUBLIC_API_URL}/api/payment/complete`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          appointmentId: draftAppointmentId,
-          paidPrice: result.paidPrice,
-        }),
+        body: JSON.stringify(requestBody),
       });
 
-      console.log("🟢 Randevu başarıyla tamamlandı.");
-      return res.redirect(
-        `${redirectBase}/success?appointmentId=${draftAppointmentId}&paidPrice=${result.paidPrice}`
-      );
+      if (!completeResponse.ok) {
+        const errorText = await completeResponse.text();
+        console.error("❌ Complete endpoint hatası:", {
+          status: completeResponse.status,
+          statusText: completeResponse.statusText,
+          body: errorText,
+        });
+        throw new Error("Randevu tamamlanamadı.");
+      }
+
+      const completeData = await completeResponse.json();
+      console.log("🟢 Frontend'den gelen yanıt:", completeData);
+
+      if (completeData.success && completeData.appointmentId) {
+        return res.redirect(
+          `${redirectBase}/success?appointmentId=${completeData.appointmentId}&paidPrice=${result.paidPrice}`
+        );
+      } else {
+        throw new Error("Randevu oluşturma başarısız.");
+      }
     } catch (error) {
       console.error("⚠️ Randevu güncelleme hatası:", error);
       return res.redirect(`${redirectBase}/fail`);
