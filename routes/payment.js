@@ -7,14 +7,14 @@ require("dotenv").config();
 const router = express.Router();
 
 router.use(bodyParser.urlencoded({ extended: false }));
-router.use(bodyParser.json()); 
-router.use("/callback", bodyParser.urlencoded({ extended: false }));
+router.use(bodyParser.json());
 
 const formatDateForIyzipay = () => {
   const now = new Date();
   return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}-${String(now.getDate()).padStart(2, "0")} ${String(now.getHours()).padStart(2, "0")}:${String(now.getMinutes()).padStart(2, "0")}:${String(now.getSeconds()).padStart(2, "0")}`;
 };
 
+// Ödeme başlatma
 router.post("/initiate", (req, res) => {
   const {
     cardHolderName,
@@ -55,7 +55,7 @@ router.post("/initiate", (req, res) => {
     basketId: draftAppointmentId,
     paymentChannel: Iyzipay.PAYMENT_CHANNEL.WEB,
     paymentGroup: Iyzipay.PAYMENT_GROUP.PRODUCT,
-    callbackUrl: `${process.env.NEXT_PUBLIC_API_URL || "https://1240e75370c2.ngrok-free.app"}/api/payment/callback?appointmentId=${draftAppointmentId}`,
+    callbackUrl: `${process.env.API_URL}/api/payment/callback?appointmentId=${draftAppointmentId}`,
     threeDSVersion: "2", // 3D Secure 2.0'ı zorla
     paymentCard: {
       cardHolderName: cardHolderName || "Test User",
@@ -116,7 +116,6 @@ router.post("/initiate", (req, res) => {
 
     let result;
     try {
-      // Iyzipay kütüphanesi bazen sonucu string olarak döndürebilir, bu yüzden parse etmeliyiz.
       result = typeof resultRaw === "string" ? JSON.parse(resultRaw) : resultRaw;
     } catch (parseError) {
       console.error("❌ Yanıt JSON parse edilemedi:", resultRaw);
@@ -125,16 +124,11 @@ router.post("/initiate", (req, res) => {
 
     if (result.status !== "success") {
       console.error("❌ 3D başlatma başarısız:", result);
-      // Hata mesajını iyzipay'den gelen mesajla kullanıcıya göster
       return res.status(500).json({ error: result.errorMessage || "3D başlatılamadı" });
     }
 
-    const token = result.token; // 2.0'da token dönebilir
-    // threeDSHtmlContent zaten base64 kodlu geliyor, tekrar kodlamaya gerek yok.
-    // Ancak logda verdiğiniz threeDSHtmlContent değeri aslında Base64 encoded değildi.
-    // Eğer Base64 encoded geliyorsa, direkt kullanabilirsiniz. Gelmiyorsa, sizin kodlamanız gerekir.
-    // Iyzipay'in dökümanlarına göre threeDSHtmlContent Base64encoded gelir.
-    const encodedHtml = result.threeDSHtmlContent; 
+    const token = result.token;
+    const encodedHtml = result.threeDSHtmlContent; // Iyzipay zaten Base64 encoded gönderiyor
 
     console.log("🔑 Token:", token);
     console.log("📄 Tam yanıt:", result);
@@ -159,13 +153,11 @@ router.post("/callback", async (req, res) => {
 
   if (!paymentId || !conversationId || !effectiveAppointmentId) {
     console.warn("⚠️ Eksik callback verisi:", { paymentId, conversationId, effectiveAppointmentId });
-    // Kullanıcıyı direkt hata sayfasına yönlendir, çünkü eksik veri ile devam edemeyiz.
     return res.redirect(`${redirectBase}/fail?reason=missing_callback_data`);
   }
 
   if (status !== "success") {
     console.error("❌ Ödeme durumu başarısız:", status);
-    // Hata durumunda kullanıcıyı fail sayfasına yönlendir.
     return res.redirect(`${redirectBase}/fail?reason=payment_failed&status=${status}`);
   }
 
@@ -195,11 +187,15 @@ router.post("/callback", async (req, res) => {
       };
       console.log("📤 Complete isteği gönderiliyor:", requestBody);
 
-      // Frontend'deki complete API'nize istek gönderme
       const completeResponse = await fetch(`${process.env.NEXT_PUBLIC_API_URL}/api/payment/complete`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(requestBody),
+      });
+
+      console.log("📥 Complete yanıt durumu:", {
+        status: completeResponse.status,
+        statusText: completeResponse.statusText,
       });
 
       if (!completeResponse.ok) {
