@@ -75,7 +75,10 @@ router.post("/initiate", (req, res) => {
       lastLoginDate: formatDateForIyzipay(),
       registrationDate: formatDateForIyzipay(),
       registrationAddress: "Test Mah. No:1",
-      ip: req.headers["x-forwarded-for"] || req.socket.remoteAddress || "127.0.0.1",
+      ip:
+        req.headers["x-forwarded-for"] ||
+        req.socket.remoteAddress ||
+        "127.0.0.1",
       city: "İstanbul",
       country: "Türkiye",
       zipCode: "34700",
@@ -111,20 +114,27 @@ router.post("/initiate", (req, res) => {
   iyzipay.threedsInitialize.create(request, (err, resultRaw) => {
     if (err) {
       console.error("❌ 3D başlatma hatası:", err);
-      return res.status(500).json({ error: "3D başlatma sırasında hata oluştu" });
+      return res
+        .status(500)
+        .json({ error: "3D başlatma sırasında hata oluştu" });
     }
 
     let result;
     try {
-      result = typeof resultRaw === "string" ? JSON.parse(resultRaw) : resultRaw;
+      result =
+        typeof resultRaw === "string" ? JSON.parse(resultRaw) : resultRaw;
     } catch (parseError) {
       console.error("❌ Yanıt JSON parse edilemedi:", resultRaw);
-      return res.status(500).json({ error: "Ödeme ağ geçidinden geçersiz yanıt alındı." });
+      return res
+        .status(500)
+        .json({ error: "Ödeme ağ geçidinden geçersiz yanıt alındı." });
     }
 
     if (result.status !== "success") {
       console.error("❌ 3D başlatma başarısız:", result);
-      return res.status(500).json({ error: result.errorMessage || "3D başlatılamadı" });
+      return res
+        .status(500)
+        .json({ error: result.errorMessage || "3D başlatılamadı" });
     }
 
     const token = result.token;
@@ -147,18 +157,30 @@ router.post("/callback", async (req, res) => {
   const { appointmentId } = req.query;
   const effectiveAppointmentId = appointmentId;
 
-  console.log("🔍 Callback verileri:", { paymentId, conversationId, status, effectiveAppointmentId });
+  console.log("🔍 Callback verileri:", {
+    paymentId,
+    conversationId,
+    status,
+    effectiveAppointmentId,
+  });
 
-  const redirectBase = process.env.NEXT_PUBLIC_SITE_URL || "http://localhost:3000";
+  const redirectBase =
+    process.env.NEXT_PUBLIC_SITE_URL || "http://localhost:3000";
 
   if (!paymentId || !conversationId || !effectiveAppointmentId) {
-    console.warn("⚠️ Eksik callback verisi:", { paymentId, conversationId, effectiveAppointmentId });
+    console.warn("⚠️ Eksik callback verisi:", {
+      paymentId,
+      conversationId,
+      effectiveAppointmentId,
+    });
     return res.redirect(`${redirectBase}/fail?reason=missing_callback_data`);
   }
 
   if (status !== "success") {
     console.error("❌ Ödeme durumu başarısız:", status);
-    return res.redirect(`${redirectBase}/fail?reason=payment_failed&status=${status}`);
+    return res.redirect(
+      `${redirectBase}/fail?reason=payment_failed&status=${status}`
+    );
   }
 
   const iyzipay = new Iyzipay({
@@ -176,7 +198,9 @@ router.post("/callback", async (req, res) => {
   iyzipay.payment.retrieve(request, async (err, result) => {
     if (err || result.status !== "success") {
       console.error("❌ Ödeme onayı başarısız:", err || result);
-      return res.redirect(`${redirectBase}/fail?reason=payment_verification_failed`);
+      return res.redirect(
+        `${redirectBase}/fail?reason=payment_verification_failed`
+      );
     }
 
     try {
@@ -185,13 +209,20 @@ router.post("/callback", async (req, res) => {
         paidPrice: result.paidPrice || result.price || "0.00",
         conversationId: result.conversationId,
       };
-      console.log("📤 Complete isteği gönderiliyor:", requestBody);
-
-      const completeResponse = await fetch(`${process.env.NEXT_PUBLIC_SITE_URL}/api/payment/complete`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(requestBody),
+      console.log("📤 Complete isteği gönderiliyor:", {
+        draftAppointmentId: effectiveAppointmentId,
+        paidPrice: result.paidPrice || result.price || "0.00",
+        conversationId: result.conversationId,
       });
+
+      const completeResponse = await fetch(
+        `${process.env.NEXT_PUBLIC_SITE_URL}/api/payment/complete`,
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(requestBody),
+        }
+      );
 
       console.log("📥 Complete yanıt durumu:", {
         status: completeResponse.status,
@@ -212,13 +243,17 @@ router.post("/callback", async (req, res) => {
       console.log("🟢 Frontend'den gelen yanıt:", completeData);
 
       if (completeData.success && completeData.appointmentId) {
-        return res.redirect(`${redirectBase}/success?appointmentId=${completeData.appointmentId}&paidPrice=${result.paidPrice}`);
+        return res.redirect(
+          `${redirectBase}/success?appointmentId=${completeData.appointmentId}&paidPrice=${result.paidPrice}`
+        );
       } else {
         throw new Error("Randevu oluşturma başarısız.");
       }
     } catch (error) {
       console.error("⚠️ Randevu güncelleme hatası:", error);
-      return res.redirect(`${redirectBase}/fail?reason=appointment_update_failed`);
+      return res.redirect(
+        `${redirectBase}/fail?reason=appointment_update_failed`
+      );
     }
   });
 });
