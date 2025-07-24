@@ -7,23 +7,21 @@ dotenv.config();
 
 const app = express();
 
-// ✅ Middleware'ler
 app.use(cors({
-  origin: "http://localhost:3000", // Local frontend adresi
+  origin: process.env.NEXT_PUBLIC_SITE_URL || "http://localhost:3000",
   methods: ["GET", "POST"],
   credentials: true,
 }));
+
 app.use(express.json());
 app.use(express.urlencoded({ extended: false }));
 
-// ✅ Route tanımları
 app.use("/api/payment", paymentRoutes);
 
 app.get("/", (req, res) => {
   res.send("✅ Iyzico ödeme sunucusu çalışıyor");
 });
 
-// ✅ Server başlat
 const PORT = process.env.PORT || 4000;
 app.listen(PORT, () => {
   console.log(`🚀 Server running on port ${PORT}`);
