@@ -187,7 +187,7 @@ router.post("/callback", async (req, res) => {
       };
       console.log("📤 Complete isteği gönderiliyor:", requestBody);
 
-      const completeResponse = await fetch(`${process.env.NEXT_PUBLIC_API_URL}/api/payment/complete`, {
+      const completeResponse = await fetch(`${process.env.NEXT_PUBLIC_SITE_URL}/api/payment/complete`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(requestBody),
