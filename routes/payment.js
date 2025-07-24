@@ -27,6 +27,7 @@ router.post("/initiate", (req, res) => {
   } = req.body;
 
   if (!draftAppointmentId || !price) {
+    console.warn("⚠️ Eksik veri:", { draftAppointmentId, price });
     return res
       .status(400)
       .json({ error: "Eksik veri: draftAppointmentId veya price yok." });
@@ -34,6 +35,7 @@ router.post("/initiate", (req, res) => {
 
   const finalPrice = parseFloat(price);
   if (isNaN(finalPrice) || finalPrice <= 0) {
+    console.warn("⚠️ Geçersiz fiyat:", price);
     return res.status(400).json({ error: "Geçersiz fiyat." });
   }
 
@@ -124,7 +126,7 @@ router.post("/initiate", (req, res) => {
       result =
         typeof resultRaw === "string" ? JSON.parse(resultRaw) : resultRaw;
     } catch (parseError) {
-      console.error("❌ Yanıt JSON parse edilemedi:", resultRaw);
+      console.error("❌ Yanıt JSON parse edilemedi:", parseError);
       return res
         .status(500)
         .json({ error: "Ödeme ağ geçidinden geçersiz yanıt alındı." });
@@ -138,7 +140,7 @@ router.post("/initiate", (req, res) => {
     }
 
     const token = result.token;
-    const encodedHtml = result.threeDSHtmlContent; // Iyzipay zaten Base64 encoded gönderiyor
+    const encodedHtml = result.threeDSHtmlContent;
 
     console.log("🔑 Token:", token);
     console.log("📄 Tam yanıt:", result);
@@ -153,7 +155,7 @@ router.post("/callback", async (req, res) => {
   console.log("➡️ BODY:", req.body);
   console.log("➡️ QUERY:", req.query);
 
-  const { paymentId, conversationId, status } = req.body;
+  const { paymentId, conversationId, status, mdStatus } = req.body;
   const { appointmentId } = req.query;
   const effectiveAppointmentId = appointmentId;
 
@@ -161,6 +163,7 @@ router.post("/callback", async (req, res) => {
     paymentId,
     conversationId,
     status,
+    mdStatus,
     effectiveAppointmentId,
   });
 
@@ -203,17 +206,23 @@ router.post("/callback", async (req, res) => {
       );
     }
 
+    // paidPrice kontrolü
+    const paidPrice = parseFloat(result.paidPrice || result.price || "0.00");
+    if (isNaN(paidPrice) || paidPrice <= 0) {
+      console.error("❌ Geçersiz paidPrice:", result.paidPrice || result.price);
+      return res.redirect(
+        `${redirectBase}/fail?reason=invalid_paid_price`
+      );
+    }
+
     try {
       const requestBody = {
-        appointmentId: effectiveAppointmentId,
-        paidPrice: result.paidPrice || result.price || "0.00",
-        conversationId: result.conversationId,
-      };
-      console.log("📤 Complete isteği gönderiliyor:", {
         draftAppointmentId: effectiveAppointmentId,
-        paidPrice: result.paidPrice || result.price || "0.00",
+        paidPrice,
         conversationId: result.conversationId,
-      });
+        paymentId, // paymentId eklendi
+      };
+      console.log("📤 Complete isteği gönderiliyor:", requestBody);
 
       const completeResponse = await fetch(
         `${process.env.NEXT_PUBLIC_SITE_URL}/api/payment/complete`,
@@ -236,7 +245,13 @@ router.post("/callback", async (req, res) => {
           statusText: completeResponse.statusText,
           body: errorText,
         });
-        throw new Error("Randevu tamamlama servisi hatası.");
+        try {
+          const errorJson = JSON.parse(errorText);
+          console.error("❌ Hata detayları:", errorJson);
+        } catch (e) {
+          console.error("❌ Hata JSON parse edilemedi:", errorText);
+        }
+        throw new Error(`Randevu tamamlama servisi hatası: ${errorText}`);
       }
 
       const completeData = await completeResponse.json();
@@ -244,7 +259,7 @@ router.post("/callback", async (req, res) => {
 
       if (completeData.success && completeData.appointmentId) {
         return res.redirect(
-          `${redirectBase}/success?appointmentId=${completeData.appointmentId}&paidPrice=${result.paidPrice}`
+          `${redirectBase}/success?appointmentId=${completeData.appointmentId}&paidPrice=${paidPrice}`
         );
       } else {
         throw new Error("Randevu oluşturma başarısız.");
@@ -252,7 +267,7 @@ router.post("/callback", async (req, res) => {
     } catch (error) {
       console.error("⚠️ Randevu güncelleme hatası:", error);
       return res.redirect(
-        `${redirectBase}/fail?reason=appointment_update_failed`
+        `${redirectBase}/fail?reason=appointment_update_failed&error=${encodeURIComponent(error.message)}`
       );
     }
   });
