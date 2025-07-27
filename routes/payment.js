@@ -156,13 +156,23 @@ router.post("/callback", async (req, res) => {
   console.log("➡️ QUERY:", req.query);
 
   try {
-    const { paymentId, conversationId, status, mdStatus } = req.body;
-    const { appointmentId } = req.query;
-    const effectiveAppointmentId = appointmentId;
+    const {
+      paymentId,
+      paymentConversationId, 
+      status,
+      mdStatus,
+      draftAppointmentId,
+      appointmentId: bodyAppointmentId
+    } = req.body;
+
+    const queryAppointmentId = req.query.appointmentId;
+
+    const effectiveAppointmentId =
+      queryAppointmentId || draftAppointmentId || bodyAppointmentId;
 
     console.log("🔍 Callback verileri:", {
       paymentId,
-      conversationId,
+      conversationId: paymentConversationId,
       status,
       mdStatus,
       effectiveAppointmentId,
@@ -171,16 +181,16 @@ router.post("/callback", async (req, res) => {
     const redirectBase =
       process.env.NEXT_PUBLIC_SITE_URL || "http://localhost:3000";
 
-    if (!paymentId || !conversationId || !effectiveAppointmentId) {
+    if (!paymentId || !paymentConversationId || !effectiveAppointmentId) {
       console.warn("⚠️ Eksik callback verisi:", {
         paymentId,
-        conversationId,
+        conversationId: paymentConversationId,
         effectiveAppointmentId,
       });
       return res.redirect(`${redirectBase}/fail?reason=missing_callback_data`);
     }
 
-    if (status !== "success") {
+    if (status !== "success" && status !== "CALLBACK_THREEDS") {
       console.error("❌ Ödeme durumu başarısız:", status);
       return res.redirect(
         `${redirectBase}/fail?reason=payment_failed&status=${status}`
@@ -195,7 +205,7 @@ router.post("/callback", async (req, res) => {
 
     const request = {
       locale: Iyzipay.LOCALE.TR,
-      conversationId,
+      conversationId: paymentConversationId,
       paymentId,
     };
 
