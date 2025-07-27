@@ -7,10 +7,22 @@ dotenv.config();
 
 const app = express();
 
+const allowedOrigins = [
+  "http://localhost:3000",
+  "https://evindebesle.com"
+];
+
 app.use(cors({
-  origin: process.env.NEXT_PUBLIC_SITE_URL || "http://localhost:3000",
-  methods: ["GET", "POST"],
+  origin: function (origin, callback) {
+    if (!origin || allowedOrigins.includes(origin)) {
+      callback(null, true);
+    } else {
+      callback(new Error("CORS hatası: Erişime izin yok."));
+    }
+  },
   credentials: true,
+  methods: ["GET", "POST", "PUT", "DELETE", "OPTIONS"],
+  allowedHeaders: ["Content-Type", "Authorization"]
 }));
 
 app.use(express.json());
