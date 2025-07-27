@@ -232,18 +232,18 @@ router.post("/callback", cors({ origin: "*" }), async (req, res) => {
       uri: process.env.IYZIPAY_BASE_URL || "https://sandbox-api.iyzipay.com",
     });
 
-    const paymentRequest = {
+    const authRequest = {
       locale: Iyzipay.LOCALE.TR,
       conversationId: effectiveConversationId,
       paymentId: derivedPaymentId,
     };
 
-    console.log("📤 payment.retrieve gönderiliyor:", paymentRequest);
+    console.log("📤 threedsAuth gönderiliyor:", authRequest);
 
     const paymentResult = await new Promise((resolve, reject) => {
-      iyzipay.payment.retrieve(paymentRequest, (err, result) => {
+      Iyzipay.ThreeDSAuth.create(authRequest, (err, result) => {
         if (err) {
-          console.error("❌ payment.retrieve hata:", err);
+          console.error("❌ threedsAuth hata:", err);
           return reject(err);
         }
 
@@ -251,7 +251,7 @@ router.post("/callback", cors({ origin: "*" }), async (req, res) => {
         try {
           parsed = typeof result === "string" ? JSON.parse(result) : result;
         } catch (e) {
-          console.error("❌ payment.retrieve sonucu parse edilemedi:", result);
+          console.error("❌ threedsAuth sonucu parse edilemedi:", result);
           return reject(e);
         }
 
