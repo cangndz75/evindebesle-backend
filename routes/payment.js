@@ -78,7 +78,10 @@ router.post("/initiate", (req, res) => {
       lastLoginDate: formatDateForIyzipay(),
       registrationDate: formatDateForIyzipay(),
       registrationAddress: "Test Mah. No:1",
-      ip: req.headers["x-forwarded-for"] || req.socket.remoteAddress || "127.0.0.1",
+      ip:
+        req.headers["x-forwarded-for"] ||
+        req.socket.remoteAddress ||
+        "127.0.0.1",
       city: "İstanbul",
       country: "Türkiye",
       zipCode: "34700",
@@ -121,13 +124,14 @@ router.post("/initiate", (req, res) => {
 
     let result;
     try {
-      result = typeof resultRaw === "string" ? JSON.parse(resultRaw) : resultRaw;
+      result =
+        typeof resultRaw === "string" ? JSON.parse(resultRaw) : resultRaw;
     } catch (parseError) {
       console.error("❌ Yanıt JSON parse edilemedi:", parseError);
-      return res
-        .status(500)
-        .json({ error: "Ödeme ağ geçidinden geçersiz yanıt alındı." });
+      return res.status(500).json({ error: "Geçersiz JSON" });
     }
+
+    console.log("📦 threedsInitialize sonucu:", result);
 
     if (result.status !== "success") {
       console.error("❌ 3D başlatma başarısız:", result);
@@ -178,8 +182,10 @@ router.post("/callback", cors({ origin: "*" }), async (req, res) => {
     } = req.body;
     const { appointmentId: queryAppointmentId } = req.query;
     const effectiveConversationId = paymentConversationId || conversationId;
-    const effectiveAppointmentId = queryAppointmentId || draftAppointmentId || bodyAppointmentId;
-    const redirectBase = process.env.NEXT_PUBLIC_SITE_URL || "http://localhost:3000";
+    const effectiveAppointmentId =
+      queryAppointmentId || draftAppointmentId || bodyAppointmentId;
+    const redirectBase =
+      process.env.NEXT_PUBLIC_SITE_URL || "http://localhost:3000";
 
     console.log("🔍 Callback verileri:", {
       paymentId,
@@ -225,7 +231,9 @@ router.post("/callback", cors({ origin: "*" }), async (req, res) => {
 
     if (result.status !== "success") {
       console.error("❌ Ödeme onayı başarısız:", result);
-      return res.redirect(`${redirectBase}/fail?reason=payment_verification_failed`);
+      return res.redirect(
+        `${redirectBase}/fail?reason=payment_verification_failed`
+      );
     }
 
     const paidPrice = parseFloat(result.paidPrice || result.price || "0.00");
