@@ -169,7 +169,8 @@ router.post("/initiate", (req, res) => {
 
 // GET isteğini ele alma
 router.post("/callback", cors({ origin: "*" }), async (req, res) => {
-  const redirectBase = process.env.NEXT_PUBLIC_SITE_URL || "http://localhost:3000";
+  const redirectBase =
+    process.env.NEXT_PUBLIC_SITE_URL || "http://localhost:3000";
 
   console.log("🔄 CALLBACK GELDİ");
   console.log("📥 Body:", JSON.stringify(req.body, null, 2));
@@ -202,7 +203,8 @@ router.post("/callback", cors({ origin: "*" }), async (req, res) => {
       return res.redirect(`${redirectBase}/fail?reason=payment_cancelled`);
     }
 
-    const derivedPaymentId = bodyPaymentId || orderId?.match(/mock\d+-(\d+)/)?.[1];
+    const derivedPaymentId =
+      bodyPaymentId || orderId?.match(/mock\d+-(\d+)/)?.[1];
     console.log("🧾 orderId:", orderId);
     console.log("🔑 Türetilmiş paymentId:", derivedPaymentId);
 
@@ -226,14 +228,28 @@ router.post("/callback", cors({ origin: "*" }), async (req, res) => {
     console.log("📤 threedsAuth.create gönderiliyor:", authRequest);
 
     const authResult = await new Promise((resolve, reject) => {
-      iyzipay.threedsAuth.create(authRequest, (err, result) => {
+      Iyzipay.ThreeDSAuth.create(authRequest, (err, result) => {
         if (err) {
           console.error("❌ threedsAuth hata:", err);
           return reject(err);
         }
-        resolve(result);
+
+        let parsed;
+        try {
+          parsed = typeof result === "string" ? JSON.parse(result) : result;
+        } catch (e) {
+          console.error("❌ threedsAuth sonucu parse edilemedi:", result);
+          return reject(e);
+        }
+
+        resolve(parsed);
       });
     });
+    console.log("📌 Iyzipay.ThreeDSAuth tipi:", typeof Iyzipay.ThreeDSAuth);
+    console.log(
+      "📌 Iyzipay.ThreeDSAuth.create tipi:",
+      typeof Iyzipay.ThreeDSAuth.create
+    );
 
     console.log("📦 threedsAuth sonucu:", authResult);
 
@@ -248,7 +264,9 @@ router.post("/callback", cors({ origin: "*" }), async (req, res) => {
       );
     }
 
-    const paidPrice = parseFloat(authResult.paidPrice || authResult.price || "0.00");
+    const paidPrice = parseFloat(
+      authResult.paidPrice || authResult.price || "0.00"
+    );
     console.log("💰 paidPrice:", paidPrice);
 
     if (isNaN(paidPrice) || paidPrice <= 0) {
@@ -264,11 +282,14 @@ router.post("/callback", cors({ origin: "*" }), async (req, res) => {
 
     console.log("📤 /api/payment/complete gönderiliyor:", completeBody);
 
-    const completeResponse = await fetch(`${redirectBase}/api/payment/complete`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(completeBody),
-    });
+    const completeResponse = await fetch(
+      `${redirectBase}/api/payment/complete`,
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(completeBody),
+      }
+    );
 
     console.log("📥 /api/payment/complete yanıt:", {
       status: completeResponse.status,
