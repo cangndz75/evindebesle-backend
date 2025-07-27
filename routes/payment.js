@@ -167,7 +167,18 @@ router.post("/initiate", (req, res) => {
   });
 });
 
-// GET isteğini ele alma
+router.get("/callback", cors({ origin: "*" }), (req, res) => {
+  const redirectBase =
+    process.env.NEXT_PUBLIC_SITE_URL || "http://localhost:3000";
+  console.log("⚠️ GET isteği alındı /api/payment/callback", {
+    query: JSON.stringify(req.query, null, 2),
+    url: req.originalUrl,
+  });
+  return res.redirect(
+    `${redirectBase}/fail?reason=invalid_request_method&error=${encodeURIComponent("GET isteği desteklenmiyor, yalnızca POST kabul edilir.")}`
+  );
+});
+
 router.post("/callback", cors({ origin: "*" }), async (req, res) => {
   const redirectBase =
     process.env.NEXT_PUBLIC_SITE_URL || "http://localhost:3000";
@@ -179,7 +190,9 @@ router.post("/callback", cors({ origin: "*" }), async (req, res) => {
 
   try {
     const {
+      smsCode,
       orderId,
+      PaReq,
       isCancel,
       paymentId: bodyPaymentId,
       conversationId,
@@ -219,18 +232,18 @@ router.post("/callback", cors({ origin: "*" }), async (req, res) => {
       uri: process.env.IYZIPAY_BASE_URL || "https://sandbox-api.iyzipay.com",
     });
 
-    const authRequest = {
+    const paymentRequest = {
       locale: Iyzipay.LOCALE.TR,
       conversationId: effectiveConversationId,
       paymentId: derivedPaymentId,
     };
 
-    console.log("📤 threedsAuth.create gönderiliyor:", authRequest);
+    console.log("📤 payment.retrieve gönderiliyor:", paymentRequest);
 
-    const authResult = await new Promise((resolve, reject) => {
-      Iyzipay.ThreeDSAuth.create(authRequest, (err, result) => {
+    const paymentResult = await new Promise((resolve, reject) => {
+      iyzipay.payment.retrieve(paymentRequest, (err, result) => {
         if (err) {
-          console.error("❌ threedsAuth hata:", err);
+          console.error("❌ payment.retrieve hata:", err);
           return reject(err);
         }
 
@@ -238,34 +251,29 @@ router.post("/callback", cors({ origin: "*" }), async (req, res) => {
         try {
           parsed = typeof result === "string" ? JSON.parse(result) : result;
         } catch (e) {
-          console.error("❌ threedsAuth sonucu parse edilemedi:", result);
+          console.error("❌ payment.retrieve sonucu parse edilemedi:", result);
           return reject(e);
         }
 
         resolve(parsed);
       });
     });
-    console.log("📌 Iyzipay.ThreeDSAuth tipi:", typeof Iyzipay.ThreeDSAuth);
-    console.log(
-      "📌 Iyzipay.ThreeDSAuth.create tipi:",
-      typeof Iyzipay.ThreeDSAuth.create
-    );
 
-    console.log("📦 threedsAuth sonucu:", authResult);
+    console.log("📦 payment.retrieve sonucu:", paymentResult);
 
-    if (authResult.status !== "success") {
-      console.error("❌ threedsAuth başarısız:", {
-        status: authResult.status,
-        errorMessage: authResult.errorMessage,
-        errorCode: authResult.errorCode,
+    if (paymentResult.status !== "success") {
+      console.error("❌ payment.retrieve başarısız:", {
+        status: paymentResult.status,
+        errorMessage: paymentResult.errorMessage,
+        errorCode: paymentResult.errorCode,
       });
       return res.redirect(
-        `${redirectBase}/fail?reason=auth_failed&error=${encodeURIComponent(authResult.errorMessage || "Doğrulama başarısız")}`
+        `${redirectBase}/fail?reason=payment_verification_failed&error=${encodeURIComponent(paymentResult.errorMessage || "Doğrulama başarısız")}`
       );
     }
 
     const paidPrice = parseFloat(
-      authResult.paidPrice || authResult.price || "0.00"
+      paymentResult.paidPrice || paymentResult.price || "0.00"
     );
     console.log("💰 paidPrice:", paidPrice);
 
@@ -277,7 +285,7 @@ router.post("/callback", cors({ origin: "*" }), async (req, res) => {
     const completeBody = {
       appointmentId: effectiveAppointmentId,
       paidPrice,
-      conversationId: authResult.conversationId || effectiveConversationId,
+      conversationId: paymentResult.conversationId || effectiveConversationId,
     };
 
     console.log("📤 /api/payment/complete gönderiliyor:", completeBody);
