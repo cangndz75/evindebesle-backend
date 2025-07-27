@@ -1,7 +1,7 @@
 const express = require("express");
 const cors = require("cors");
 const dotenv = require("dotenv");
-const paymentRoutes = require("./routes/payment");
+const paymentRoutes = require("./routes/payment"); // initiate + callback burada
 
 dotenv.config();
 
@@ -9,14 +9,22 @@ const app = express();
 
 const allowedOrigins = [
   "http://localhost:3000",
-  "https://evindebesle.com"
+  "https://evindebesle.com",
+  "https://sandbox-api.iyzipay.com",     // Sadece fetch için gerekebilir
+  "https://sandbox-secure.iyzipay.com", // 3D iframe sunucusu
 ];
+
+app.use((req, res, next) => {
+  console.log(`📥 ${req.method} - ${req.originalUrl}`);
+  next();
+});
 
 app.use(cors({
   origin: function (origin, callback) {
     if (!origin || allowedOrigins.includes(origin)) {
       callback(null, true);
     } else {
+      console.warn("⛔️ CORS reddedildi:", origin);
       callback(new Error("CORS hatası: Erişime izin yok."));
     }
   },
@@ -25,8 +33,8 @@ app.use(cors({
   allowedHeaders: ["Content-Type", "Authorization"]
 }));
 
+app.use(express.urlencoded({ extended: true }));
 app.use(express.json());
-app.use(express.urlencoded({ extended: false }));
 
 app.use("/api/payment", paymentRoutes);
 
