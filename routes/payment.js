@@ -15,7 +15,7 @@ const formatDateForIyzipay = () => {
   return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}-${String(now.getDate()).padStart(2, "0")} ${String(now.getHours()).padStart(2, "0")}:${String(now.getMinutes()).padStart(2, "0")}:${String(now.getSeconds()).padStart(2, "0")}`;
 };
 
-// Ödeme başlatma (mevcut kod, threeDSHtmlContent düzenlemesi zaten var)
+// Ödeme başlatma
 router.post("/initiate", (req, res) => {
   const {
     cardHolderName,
@@ -146,6 +146,10 @@ router.post("/initiate", (req, res) => {
       /https:\/\/sandbox-api\.iyzipay\.com\/payment\/mock\/confirm3ds/,
       `${process.env.API_URL}/api/payment/callback?appointmentId=${draftAppointmentId}`
     );
+    decodedHtml = decodedHtml.replace(
+      /https:\/\/sandbox-api\.iyzipay\.com\/payment\/iyzipos\/callback3ds\/failure\/\d/,
+      `${process.env.API_URL}/api/payment/callback?appointmentId=${draftAppointmentId}`
+    );
     encodedHtml = Buffer.from(decodedHtml).toString("base64");
 
     console.log("🔑 Token:", result.token || "Yok");
@@ -160,6 +164,7 @@ router.post("/initiate", (req, res) => {
 
 // Callback
 router.post("/callback", cors({ origin: "*" }), async (req, res) => {
+  const redirectBase = process.env.NEXT_PUBLIC_SITE_URL || "http://localhost:3000";
   console.log("🔄 CALLBACK GELDİ", {
     body: JSON.stringify(req.body, null, 2),
     query: JSON.stringify(req.query, null, 2),
@@ -181,9 +186,8 @@ router.post("/callback", cors({ origin: "*" }), async (req, res) => {
       appointmentId: bodyAppointmentId,
     } = req.body;
     const { appointmentId: queryAppointmentId } = req.query;
-    const effectiveConversationId = paymentConversationId || conversationId;
+    const effectiveConversationId = paymentConversationId || conversationId || uuidv4();
     const effectiveAppointmentId = queryAppointmentId || draftAppointmentId || bodyAppointmentId;
-    const redirectBase = process.env.NEXT_PUBLIC_SITE_URL || "http://localhost:3000";
 
     console.log("🔍 Callback verileri:", {
       smsCode,
@@ -197,29 +201,39 @@ router.post("/callback", cors({ origin: "*" }), async (req, res) => {
       effectiveAppointmentId,
     });
 
+    if (!effectiveAppointmentId) {
+      console.warn("⚠️ Eksik appointmentId:", { effectiveAppointmentId });
+      return res.redirect(`${redirectBase}/fail?reason=missing_appointment_id`);
+    }
+
+    if (isCancel === "1") {
+      console.warn("⚠️ Ödeme iptal edildi");
+      return res.redirect(`${redirectBase}/fail?reason=payment_cancelled`);
+    }
+
     const iyzipay = new Iyzipay({
       apiKey: process.env.IYZIPAY_API_KEY,
       secretKey: process.env.IYZIPAY_SECRET_KEY,
       uri: process.env.IYZIPAY_BASE_URL || "https://sandbox-api.iyzipay.com",
     });
 
-    // 3D Secure doğrulama için threedsAuth çağrısı
     if (smsCode && orderId && PaReq) {
       const authRequest = {
         locale: Iyzipay.LOCALE.TR,
-        conversationId: effectiveConversationId || uuidv4(),
+        conversationId: effectiveConversationId,
         paymentId: orderId.replace(/mock\d+-/, ""), // orderId'den paymentId türet
         paReq: PaReq,
       };
 
+      // threedsAuth yerine payment.auth kullanıyoruz, çünkü mock ortamda threedsAuth desteklenmeyebilir
       const authResult = await new Promise((resolve, reject) => {
-        iyzipay.threedsAuth.create(authRequest, (err, result) => {
+        iyzipay.payment.auth(authRequest, (err, result) => {
           if (err) return reject(err);
           resolve(result);
         });
       });
 
-      console.log("📦 threedsAuth sonucu:", authResult);
+      console.log("📦 payment.auth sonucu:", authResult);
 
       if (authResult.status !== "success") {
         console.error("❌ 3D doğrulama başarısız:", authResult);
@@ -232,7 +246,7 @@ router.post("/callback", cors({ origin: "*" }), async (req, res) => {
       const paymentRequest = {
         locale: Iyzipay.LOCALE.TR,
         conversationId: authResult.conversationId || effectiveConversationId,
-        paymentId: authResult.paymentId,
+        paymentId: authResult.paymentId || orderId.replace(/mock\d+-/, ""),
       };
 
       const paymentResult = await new Promise((resolve, reject) => {
