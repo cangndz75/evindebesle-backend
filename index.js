@@ -21,12 +21,16 @@ app.use((req, res, next) => {
 
 app.use(cors({
   origin: function (origin, callback) {
-    if (!origin || allowedOrigins.includes(origin)) {
-      callback(null, true);
-    } else {
-      console.warn("⛔️ CORS reddedildi:", origin);
-      callback(new Error("CORS hatası: Erişime izin yok."));
+    if (!origin) {
+      return callback(null, true);
     }
+
+    if (allowedOrigins.includes(origin)) {
+      return callback(null, true);
+    }
+
+    console.warn("⛔️ CORS reddedildi:", origin);
+    return callback(null, true); 
   },
   credentials: true,
   methods: ["GET", "POST", "PUT", "DELETE", "OPTIONS"],
