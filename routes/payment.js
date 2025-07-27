@@ -2,6 +2,7 @@ const express = require("express");
 const Iyzipay = require("iyzipay");
 const { v4: uuidv4 } = require("uuid");
 const bodyParser = require("body-parser");
+const cors = require("cors");
 require("dotenv").config();
 
 const router = express.Router();
@@ -14,7 +15,7 @@ const formatDateForIyzipay = () => {
   return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}-${String(now.getDate()).padStart(2, "0")} ${String(now.getHours()).padStart(2, "0")}:${String(now.getMinutes()).padStart(2, "0")}:${String(now.getSeconds()).padStart(2, "0")}`;
 };
 
-// Ödeme başlatma
+// Ödeme başlatma (mevcut kod, threeDSHtmlContent düzenlemesi zaten var)
 router.post("/initiate", (req, res) => {
   const {
     cardHolderName,
@@ -58,7 +59,7 @@ router.post("/initiate", (req, res) => {
     paymentChannel: Iyzipay.PAYMENT_CHANNEL.WEB,
     paymentGroup: Iyzipay.PAYMENT_GROUP.PRODUCT,
     callbackUrl: `${process.env.API_URL}/api/payment/callback?appointmentId=${draftAppointmentId}`,
-    threeDSVersion: "2", // 3D Secure 2.0'ı zorla
+    threeDSVersion: "2",
     paymentCard: {
       cardHolderName: cardHolderName || "Test User",
       cardNumber: (cardNumber || "").replace(/\s/g, ""),
@@ -77,10 +78,7 @@ router.post("/initiate", (req, res) => {
       lastLoginDate: formatDateForIyzipay(),
       registrationDate: formatDateForIyzipay(),
       registrationAddress: "Test Mah. No:1",
-      ip:
-        req.headers["x-forwarded-for"] ||
-        req.socket.remoteAddress ||
-        "127.0.0.1",
+      ip: req.headers["x-forwarded-for"] || req.socket.remoteAddress || "127.0.0.1",
       city: "İstanbul",
       country: "Türkiye",
       zipCode: "34700",
@@ -123,8 +121,7 @@ router.post("/initiate", (req, res) => {
 
     let result;
     try {
-      result =
-        typeof resultRaw === "string" ? JSON.parse(resultRaw) : resultRaw;
+      result = typeof resultRaw === "string" ? JSON.parse(resultRaw) : resultRaw;
     } catch (parseError) {
       console.error("❌ Yanıt JSON parse edilemedi:", parseError);
       return res
@@ -139,57 +136,67 @@ router.post("/initiate", (req, res) => {
         .json({ error: result.errorMessage || "3D başlatılamadı" });
     }
 
-    const token = result.token;
-    const encodedHtml = result.threeDSHtmlContent;
+    let encodedHtml = result.threeDSHtmlContent;
+    let decodedHtml = atob(encodedHtml);
+    decodedHtml = decodedHtml.replace(
+      /https:\/\/sandbox-api\.iyzipay\.com\/payment\/iyzipos\/callback3ds\/success\/\d/,
+      `${process.env.API_URL}/api/payment/callback?appointmentId=${draftAppointmentId}`
+    );
+    decodedHtml = decodedHtml.replace(
+      /https:\/\/sandbox-api\.iyzipay\.com\/payment\/mock\/confirm3ds/,
+      `${process.env.API_URL}/api/payment/callback?appointmentId=${draftAppointmentId}`
+    );
+    encodedHtml = Buffer.from(decodedHtml).toString("base64");
 
-    console.log("🔑 Token:", token);
-    console.log("📄 Tam yanıt:", result);
+    console.log("🔑 Token:", result.token || "Yok");
+    console.log("📄 Düzenlenmiş HTML:", decodedHtml);
 
-    return res.json({ paymentPageHtml: encodedHtml, token: token || null });
+    return res.json({
+      paymentPageHtml: encodedHtml,
+      token: result.token || null,
+    });
   });
 });
 
 // Callback
-router.post("/callback", async (req, res) => {
-  console.log("🔄 CALLBACK GELDİ");
-  console.log("➡️ BODY:", req.body);
-  console.log("➡️ QUERY:", req.query);
+router.post("/callback", cors({ origin: "*" }), async (req, res) => {
+  console.log("🔄 CALLBACK GELDİ", {
+    body: JSON.stringify(req.body, null, 2),
+    query: JSON.stringify(req.query, null, 2),
+    url: req.originalUrl,
+  });
 
   try {
     const {
       paymentId,
-      paymentConversationId, 
+      paymentConversationId,
+      conversationId,
       status,
       mdStatus,
       draftAppointmentId,
-      appointmentId: bodyAppointmentId
+      appointmentId: bodyAppointmentId,
     } = req.body;
-
-    const queryAppointmentId = req.query.appointmentId;
-
-    const effectiveAppointmentId =
-      queryAppointmentId || draftAppointmentId || bodyAppointmentId;
+    const { appointmentId: queryAppointmentId } = req.query;
+    const effectiveConversationId = paymentConversationId || conversationId;
+    const effectiveAppointmentId = queryAppointmentId || draftAppointmentId || bodyAppointmentId;
+    const redirectBase = process.env.NEXT_PUBLIC_SITE_URL || "http://localhost:3000";
 
     console.log("🔍 Callback verileri:", {
       paymentId,
-      conversationId: paymentConversationId,
+      conversationId: effectiveConversationId,
       status,
       mdStatus,
       effectiveAppointmentId,
     });
 
-    const redirectBase =
-      process.env.NEXT_PUBLIC_SITE_URL || "http://localhost:3000";
-
-    if (!paymentId || !paymentConversationId || !effectiveAppointmentId) {
+    if (!paymentId || !effectiveConversationId || !effectiveAppointmentId) {
       console.warn("⚠️ Eksik callback verisi:", {
         paymentId,
-        conversationId: paymentConversationId,
+        effectiveConversationId,
         effectiveAppointmentId,
       });
       return res.redirect(`${redirectBase}/fail?reason=missing_callback_data`);
     }
-
     if (status !== "success" && status !== "CALLBACK_THREEDS") {
       console.error("❌ Ödeme durumu başarısız:", status);
       return res.redirect(
@@ -205,84 +212,78 @@ router.post("/callback", async (req, res) => {
 
     const request = {
       locale: Iyzipay.LOCALE.TR,
-      conversationId: paymentConversationId,
+      conversationId: effectiveConversationId, // Düzeltildi
       paymentId,
     };
 
-    iyzipay.payment.retrieve(request, async (err, result) => {
-      try {
-        if (err || result.status !== "success") {
-          console.error("❌ Ödeme onayı başarısız:", err || result);
-          return res.redirect(
-            `${redirectBase}/fail?reason=payment_verification_failed`
-          );
-        }
-
-        const paidPrice = parseFloat(result.paidPrice || result.price || "0.00");
-        if (isNaN(paidPrice) || paidPrice <= 0) {
-          console.error("❌ Geçersiz paidPrice:", result.paidPrice || result.price);
-          return res.redirect(`${redirectBase}/fail?reason=invalid_paid_price`);
-        }
-
-        const requestBody = {
-          draftAppointmentId: effectiveAppointmentId,
-          paidPrice,
-          conversationId: result.conversationId,
-          paymentId,
-        };
-
-        console.log("📤 Complete isteği gönderiliyor:", requestBody);
-
-        const completeResponse = await fetch(
-          `${process.env.NEXT_PUBLIC_SITE_URL}/api/payment/complete`,
-          {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify(requestBody),
-          }
-        );
-
-        console.log("📥 Complete yanıt durumu:", {
-          status: completeResponse.status,
-          statusText: completeResponse.statusText,
-        });
-
-        if (!completeResponse.ok) {
-          const errorText = await completeResponse.text();
-          console.error("❌ Complete endpoint hatası:", {
-            status: completeResponse.status,
-            statusText: completeResponse.statusText,
-            body: errorText,
-          });
-          return res.redirect(
-            `${redirectBase}/fail?reason=appointment_update_failed&error=${encodeURIComponent(
-              errorText
-            )}`
-          );
-        }
-
-        const completeData = await completeResponse.json();
-        console.log("🟢 Frontend'den gelen yanıt:", completeData);
-
-        if (completeData.success && completeData.appointmentId) {
-          return res.redirect(
-            `${redirectBase}/success?appointmentId=${completeData.appointmentId}&paidPrice=${paidPrice}`
-          );
-        } else {
-          throw new Error("Randevu oluşturma başarısız.");
-        }
-      } catch (innerErr) {
-        console.error("❌ İç try/catch hatası:", innerErr);
-        return res.redirect(
-          `${redirectBase}/fail?reason=internal_error&error=${encodeURIComponent(
-            innerErr.message
-          )}`
-        );
-      }
+    const result = await new Promise((resolve, reject) => {
+      iyzipay.payment.retrieve(request, (err, result) => {
+        if (err) return reject(err);
+        resolve(result);
+      });
     });
-  } catch (outerErr) {
-    console.error("🔥 Dış try/catch hatası (callback):", outerErr);
-    return res.status(500).send("Internal Server Error in /callback");
+
+    if (result.status !== "success") {
+      console.error("❌ Ödeme onayı başarısız:", result);
+      return res.redirect(`${redirectBase}/fail?reason=payment_verification_failed`);
+    }
+
+    const paidPrice = parseFloat(result.paidPrice || result.price || "0.00");
+    if (isNaN(paidPrice) || paidPrice <= 0) {
+      console.error("❌ Geçersiz paidPrice:", result.paidPrice || result.price);
+      return res.redirect(`${redirectBase}/fail?reason=invalid_paid_price`);
+    }
+
+    const requestBody = {
+      appointmentId: effectiveAppointmentId, // /api/payment/complete bunu bekliyor
+      paidPrice,
+      conversationId: effectiveConversationId,
+      paymentId,
+    };
+
+    console.log("📤 Complete isteği gönderiliyor:", requestBody);
+
+    const completeResponse = await fetch(
+      `${process.env.NEXT_PUBLIC_SITE_URL}/api/payment/complete`, // Doğru endpoint
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(requestBody),
+      }
+    );
+
+    console.log("📥 Complete yanıt durumu:", {
+      status: completeResponse.status,
+      statusText: completeResponse.statusText,
+    });
+
+    if (!completeResponse.ok) {
+      const errorText = await completeResponse.text();
+      console.error("❌ Complete endpoint hatası:", {
+        status: completeResponse.status,
+        statusText: completeResponse.statusText,
+        body: errorText,
+      });
+      return res.redirect(
+        `${redirectBase}/fail?reason=appointment_update_failed&error=${encodeURIComponent(errorText)}`
+      );
+    }
+
+    const completeData = await completeResponse.json();
+    console.log("🟢 Frontend'den gelen yanıt:", completeData);
+
+    if (completeData.success && completeData.appointmentId) {
+      return res.redirect(
+        `${redirectBase}/success?appointmentId=${completeData.appointmentId}&paidPrice=${paidPrice}`
+      );
+    } else {
+      throw new Error("Randevu oluşturma başarısız.");
+    }
+  } catch (err) {
+    console.error("🔥 Callback hatası:", err);
+    return res.redirect(
+      `${redirectBase}/fail?reason=internal_error&error=${encodeURIComponent(err.message)}`
+    );
   }
 });
 
