@@ -78,7 +78,10 @@ router.post("/initiate", (req, res) => {
       lastLoginDate: formatDateForIyzipay(),
       registrationDate: formatDateForIyzipay(),
       registrationAddress: "Test Mah. No:1",
-      ip: req.headers["x-forwarded-for"] || req.socket.remoteAddress || "127.0.0.1",
+      ip:
+        req.headers["x-forwarded-for"] ||
+        req.socket.remoteAddress ||
+        "127.0.0.1",
       city: "İstanbul",
       country: "Türkiye",
       zipCode: "34700",
@@ -121,7 +124,8 @@ router.post("/initiate", (req, res) => {
 
     let result;
     try {
-      result = typeof resultRaw === "string" ? JSON.parse(resultRaw) : resultRaw;
+      result =
+        typeof resultRaw === "string" ? JSON.parse(resultRaw) : resultRaw;
     } catch (parseError) {
       console.error("❌ Yanıt JSON parse edilemedi:", parseError);
       return res.status(500).json({ error: "Geçersiz JSON" });
@@ -164,7 +168,9 @@ router.post("/initiate", (req, res) => {
 
 // Callback
 router.post("/callback", cors({ origin: "*" }), async (req, res) => {
-  const redirectBase = process.env.NEXT_PUBLIC_SITE_URL || "http://localhost:3000";
+  const redirectBase =
+    process.env.NEXT_PUBLIC_SITE_URL || "http://localhost:3000";
+
   console.log("🔄 CALLBACK GELDİ", {
     body: JSON.stringify(req.body, null, 2),
     query: JSON.stringify(req.query, null, 2),
@@ -185,21 +191,14 @@ router.post("/callback", cors({ origin: "*" }), async (req, res) => {
       draftAppointmentId,
       appointmentId: bodyAppointmentId,
     } = req.body;
-    const { appointmentId: queryAppointmentId } = req.query;
-    const effectiveConversationId = paymentConversationId || conversationId || uuidv4();
-    const effectiveAppointmentId = queryAppointmentId || draftAppointmentId || bodyAppointmentId;
 
-    console.log("🔍 Callback verileri:", {
-      smsCode,
-      orderId,
-      PaReq,
-      isCancel,
-      paymentId,
-      conversationId: effectiveConversationId,
-      status,
-      mdStatus,
-      effectiveAppointmentId,
-    });
+    const { appointmentId: queryAppointmentId } = req.query;
+
+    const effectiveAppointmentId =
+      queryAppointmentId || draftAppointmentId || bodyAppointmentId;
+
+    const effectiveConversationId =
+      paymentConversationId || conversationId || require("uuid").v4();
 
     if (!effectiveAppointmentId) {
       console.warn("⚠️ Eksik appointmentId:", { effectiveAppointmentId });
@@ -217,187 +216,93 @@ router.post("/callback", cors({ origin: "*" }), async (req, res) => {
       uri: process.env.IYZIPAY_BASE_URL || "https://sandbox-api.iyzipay.com",
     });
 
-    if (smsCode && orderId && PaReq) {
-      const authRequest = {
-        locale: Iyzipay.LOCALE.TR,
-        conversationId: effectiveConversationId,
-        paymentId: orderId.replace(/mock\d+-/, ""), // orderId'den paymentId türet
-        paReq: PaReq,
-      };
-
-      // threedsAuth yerine payment.auth kullanıyoruz, çünkü mock ortamda threedsAuth desteklenmeyebilir
-      const authResult = await new Promise((resolve, reject) => {
-        iyzipay.payment.auth(authRequest, (err, result) => {
-          if (err) return reject(err);
-          resolve(result);
-        });
-      });
-
-      console.log("📦 payment.auth sonucu:", authResult);
-
-      if (authResult.status !== "success") {
-        console.error("❌ 3D doğrulama başarısız:", authResult);
-        return res.redirect(
-          `${redirectBase}/fail?reason=threeds_auth_failed&error=${encodeURIComponent(authResult.errorMessage || "3D doğrulama başarısız")}`
-        );
-      }
-
-      // Ödeme onayı için payment.retrieve çağrısı
-      const paymentRequest = {
-        locale: Iyzipay.LOCALE.TR,
-        conversationId: authResult.conversationId || effectiveConversationId,
-        paymentId: authResult.paymentId || orderId.replace(/mock\d+-/, ""),
-      };
-
-      const paymentResult = await new Promise((resolve, reject) => {
-        iyzipay.payment.retrieve(paymentRequest, (err, result) => {
-          if (err) return reject(err);
-          resolve(result);
-        });
-      });
-
-      if (paymentResult.status !== "success") {
-        console.error("❌ Ödeme onayı başarısız:", paymentResult);
-        return res.redirect(
-          `${redirectBase}/fail?reason=payment_verification_failed`
-        );
-      }
-
-      const paidPrice = parseFloat(paymentResult.paidPrice || paymentResult.price || "0.00");
-      if (isNaN(paidPrice) || paidPrice <= 0) {
-        console.error("❌ Geçersiz paidPrice:", paymentResult.paidPrice || paymentResult.price);
-        return res.redirect(`${redirectBase}/fail?reason=invalid_paid_price`);
-      }
-
-      const requestBody = {
-        appointmentId: effectiveAppointmentId,
-        paidPrice,
-        conversationId: paymentResult.conversationId || effectiveConversationId,
-      };
-
-      console.log("📤 Complete isteği gönderiliyor:", requestBody);
-
-      const completeResponse = await fetch(
-        `${process.env.NEXT_PUBLIC_SITE_URL}/api/payment/complete`,
+    // 🔐 3D Doğrulama yapılıyor
+    const threedsAuthResult = await new Promise((resolve, reject) => {
+      iyzipay.threedsAuth.create(
         {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify(requestBody),
+          locale: Iyzipay.LOCALE.TR,
+          conversationId: effectiveConversationId,
+          paymentId: orderId?.replace(/mock\d+-/, ""),
+          paReq: PaReq,
+        },
+        (err, result) => {
+          if (err) return reject(err);
+          resolve(result);
         }
       );
+    });
 
-      console.log("📥 Complete yanıt durumu:", {
-        status: completeResponse.status,
-        statusText: completeResponse.statusText,
-      });
+    console.log("📦 threedsAuth sonucu:", threedsAuthResult);
 
-      if (!completeResponse.ok) {
-        const errorText = await completeResponse.text();
-        console.error("❌ Complete endpoint hatası:", {
-          status: completeResponse.status,
-          statusText: completeResponse.statusText,
-          body: errorText,
-        });
-        return res.redirect(
-          `${redirectBase}/fail?reason=appointment_update_failed&error=${encodeURIComponent(errorText)}`
-        );
-      }
-
-      const completeData = await completeResponse.json();
-      console.log("🟢 Frontend'den gelen yanıt:", completeData);
-
-      if (completeData.success && completeData.appointmentId) {
-        return res.redirect(
-          `${redirectBase}/success?appointmentId=${completeData.appointmentId}&paidPrice=${paidPrice}`
-        );
-      } else {
-        throw new Error("Randevu oluşturma başarısız.");
-      }
-    } else if (paymentId && effectiveConversationId && effectiveAppointmentId) {
-      // Mevcut ödeme doğrulama akışı
-      const paymentRequest = {
-        locale: Iyzipay.LOCALE.TR,
-        conversationId: effectiveConversationId,
-        paymentId,
-      };
-
-      const paymentResult = await new Promise((resolve, reject) => {
-        iyzipay.payment.retrieve(paymentRequest, (err, result) => {
-          if (err) return reject(err);
-          resolve(result);
-        });
-      });
-
-      if (paymentResult.status !== "success") {
-        console.error("❌ Ödeme onayı başarısız:", paymentResult);
-        return res.redirect(
-          `${redirectBase}/fail?reason=payment_verification_failed`
-        );
-      }
-
-      const paidPrice = parseFloat(paymentResult.paidPrice || paymentResult.price || "0.00");
-      if (isNaN(paidPrice) || paidPrice <= 0) {
-        console.error("❌ Geçersiz paidPrice:", paymentResult.paidPrice || paymentResult.price);
-        return res.redirect(`${redirectBase}/fail?reason=invalid_paid_price`);
-      }
-
-      const requestBody = {
-        appointmentId: effectiveAppointmentId,
-        paidPrice,
-        conversationId: paymentResult.conversationId || effectiveConversationId,
-      };
-
-      console.log("📤 Complete isteği gönderiliyor:", requestBody);
-
-      const completeResponse = await fetch(
-        `${process.env.NEXT_PUBLIC_SITE_URL}/api/payment/complete`,
-        {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify(requestBody),
-        }
-      );
-
-      console.log("📥 Complete yanıt durumu:", {
-        status: completeResponse.status,
-        statusText: completeResponse.statusText,
-      });
-
-      if (!completeResponse.ok) {
-        const errorText = await completeResponse.text();
-        console.error("❌ Complete endpoint hatası:", {
-          status: completeResponse.status,
-          statusText: completeResponse.statusText,
-          body: errorText,
-        });
-        return res.redirect(
-          `${redirectBase}/fail?reason=appointment_update_failed&error=${encodeURIComponent(errorText)}`
-        );
-      }
-
-      const completeData = await completeResponse.json();
-      console.log("🟢 Frontend'den gelen yanıt:", completeData);
-
-      if (completeData.success && completeData.appointmentId) {
-        return res.redirect(
-          `${redirectBase}/success?appointmentId=${completeData.appointmentId}&paidPrice=${paidPrice}`
-        );
-      } else {
-        throw new Error("Randevu oluşturma başarısız.");
-      }
-    } else {
-      console.warn("⚠️ Eksik callback verisi:", {
-        paymentId,
-        effectiveConversationId,
-        effectiveAppointmentId,
-        smsCode,
-        orderId,
-        PaReq,
-      });
-      return res.redirect(`${redirectBase}/fail?reason=missing_callback_data`);
+    if (!threedsAuthResult.paymentId) {
+      console.warn("⚠️ threedsAuth sonucu paymentId içermiyor.");
+      return res.redirect(`${redirectBase}/fail?reason=missing_payment_id`);
     }
+
+    if (threedsAuthResult.status !== "success") {
+      console.error("❌ 3D doğrulama başarısız:", threedsAuthResult);
+      return res.redirect(`${redirectBase}/fail?reason=threeds_auth_failed`);
+    }
+
+    // ✅ Ödeme bilgilerini sorgula
+    const paymentResult = await new Promise((resolve, reject) => {
+      iyzipay.payment.retrieve(
+        {
+          locale: Iyzipay.LOCALE.TR,
+          conversationId: effectiveConversationId,
+          paymentId: threedsAuthResult.paymentId,
+        },
+        (err, result) => {
+          if (err) return reject(err);
+          resolve(result);
+        }
+      );
+    });
+
+    console.log("✅ Ödeme sonucu:", paymentResult);
+
+    if (paymentResult.status !== "success") {
+      console.error("❌ Ödeme doğrulama başarısız:", paymentResult);
+      return res.redirect(
+        `${redirectBase}/fail?reason=payment_verification_failed`
+      );
+    }
+
+    const paidPrice = parseFloat(
+      paymentResult.paidPrice || paymentResult.price || "0.00"
+    );
+    if (isNaN(paidPrice) || paidPrice <= 0) {
+      return res.redirect(`${redirectBase}/fail?reason=invalid_paid_price`);
+    }
+
+    // 🎯 Next.js API'ye randevuyu tamamla
+    const completeResponse = await fetch(
+      `${process.env.NEXT_PUBLIC_SITE_URL}/api/payment/complete`,
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          appointmentId: effectiveAppointmentId,
+          paidPrice,
+          conversationId: effectiveConversationId,
+        }),
+      }
+    );
+
+    const completeData = await completeResponse.json();
+    console.log("🟢 Complete yanıtı:", completeData);
+
+    if (!completeResponse.ok || !completeData.success) {
+      return res.redirect(
+        `${redirectBase}/fail?reason=appointment_update_failed`
+      );
+    }
+
+    return res.redirect(
+      `${redirectBase}/success?appointmentId=${completeData.appointmentId}&paidPrice=${paidPrice}`
+    );
   } catch (err) {
-    console.error("🔥 Callback hatası:", err);
+    console.error("🔥 Callback genel hata:", err);
     return res.redirect(
       `${redirectBase}/fail?reason=internal_error&error=${encodeURIComponent(err.message)}`
     );
