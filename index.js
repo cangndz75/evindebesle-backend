@@ -9,7 +9,7 @@ const app = express();
 
 const allowedOrigins = [
   "http://localhost:3000",
-  "https://evindebesle.com",
+  "https://dark-velvet.com",
   "https://sandbox-api.iyzipay.com",     // Sadece fetch için gerekebilir
   "https://sandbox-secure.iyzipay.com", // 3D iframe sunucusu
 ];
