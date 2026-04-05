@@ -103,7 +103,7 @@ router.post("/initiate", (req, res) => {
     basketItems: [
       {
         id: "BI101",
-        name: "Evcil Hayvan Hizmeti",
+        name: "Profesyonel Hizmet",
         category1: "Hizmet",
         itemType: Iyzipay.BASKET_ITEM_TYPE.VIRTUAL,
         price: finalPrice.toFixed(2),
