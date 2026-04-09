@@ -54,7 +54,7 @@ router.post("/initiate", (req, res) => {
     price: finalPrice.toFixed(2),
     paidPrice: finalPrice.toFixed(2),
     currency: Iyzipay.CURRENCY.TRY,
-    installment: "1",
+    installment: 1,
     basketId: draftAppointmentId,
     paymentChannel: Iyzipay.PAYMENT_CHANNEL.WEB,
     paymentGroup: Iyzipay.PAYMENT_GROUP.PRODUCT,
@@ -82,21 +82,21 @@ router.post("/initiate", (req, res) => {
         req.headers["x-forwarded-for"] ||
         req.socket.remoteAddress ||
         "127.0.0.1",
-      city: "İstanbul",
-      country: "Türkiye",
+      city: "Istanbul",
+      country: "Turkey",
       zipCode: "34700",
     },
     shippingAddress: {
       contactName: "Test User",
-      city: "İstanbul",
-      country: "Türkiye",
+      city: "Istanbul",
+      country: "Turkey",
       address: "Test Mah. No:1",
       zipCode: "34700",
     },
     billingAddress: {
       contactName: "Test User",
-      city: "İstanbul",
-      country: "Türkiye",
+      city: "Istanbul",
+      country: "Turkey",
       address: "Test Mah. No:1",
       zipCode: "34700",
     },
@@ -190,12 +190,15 @@ router.post("/callback", cors({ origin: "*" }), async (req, res) => {
 
   try {
     const {
+      status,
+      mdStatus,
       smsCode,
       orderId,
       PaReq,
       isCancel,
       paymentId: bodyPaymentId,
       conversationId,
+      conversationData,
       appointmentId: bodyAppointmentId,
     } = req.body;
     const { appointmentId: queryAppointmentId } = req.query;
@@ -214,6 +217,16 @@ router.post("/callback", cors({ origin: "*" }), async (req, res) => {
     if (isCancel === "1") {
       console.warn("⚠️ Kullanıcı ödemeyi iptal etti.");
       return res.redirect(`${redirectBase}/fail?reason=payment_cancelled`);
+    }
+
+    if (status && String(status).toLowerCase() !== "success") {
+      console.warn("⚠️ 3DS callback status başarısız:", status);
+      return res.redirect(`${redirectBase}/fail?reason=md_failed_status`);
+    }
+
+    if (mdStatus && String(mdStatus) !== "1") {
+      console.warn("⚠️ 3DS mdStatus başarısız:", mdStatus);
+      return res.redirect(`${redirectBase}/fail?reason=md_failed_code&mdStatus=${encodeURIComponent(String(mdStatus))}`);
     }
 
     const derivedPaymentId =
@@ -236,14 +249,15 @@ router.post("/callback", cors({ origin: "*" }), async (req, res) => {
       locale: Iyzipay.LOCALE.TR,
       conversationId: effectiveConversationId,
       paymentId: derivedPaymentId,
+      ...(conversationData ? { conversationData } : {}),
     };
 
-    console.log("📤 threedsAuth gönderiliyor:", authRequest);
+    console.log("📤 threedsPayment gönderiliyor:", authRequest);
 
     const paymentResult = await new Promise((resolve, reject) => {
-      Iyzipay.ThreeDSAuth.create(authRequest, (err, result) => {
+      iyzipay.threedsPayment.create(authRequest, (err, result) => {
         if (err) {
-          console.error("❌ threedsAuth hata:", err);
+          console.error("❌ threedsPayment hata:", err);
           return reject(err);
         }
 
@@ -251,7 +265,7 @@ router.post("/callback", cors({ origin: "*" }), async (req, res) => {
         try {
           parsed = typeof result === "string" ? JSON.parse(result) : result;
         } catch (e) {
-          console.error("❌ threedsAuth sonucu parse edilemedi:", result);
+          console.error("❌ threedsPayment sonucu parse edilemedi:", result);
           return reject(e);
         }
 
